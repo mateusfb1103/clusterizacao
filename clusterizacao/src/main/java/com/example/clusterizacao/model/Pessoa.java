@@ -17,6 +17,7 @@ public class Pessoa {
     private boolean centroide;
     private Long clusterId;
 
+
     public Long getId() {
         return id;
     }

@@ -18,15 +18,23 @@ public class PessoaService {
     public PessoaService() {
         adicionarPessoa(new Pessoa());
         adicionarPessoa(new Pessoa());
+        adicionarPessoa(new Pessoa());
+        adicionarPessoa(new Pessoa());
+        adicionarPessoa(new Pessoa());
     }
 
     public Pessoa adicionarPessoa(Pessoa pessoa) {
-        pessoa.setId(nextId++);
+        if (pessoa.getId() == null) {
+            pessoa.setId(nextId++);
+        }
 
         if (!pessoa.isCentroide()) {
             Pessoa centroideProximo = encontrarCentroideMaisProximo(pessoa);
             if (centroideProximo != null) {
                 pessoa.setClusterId(centroideProximo.getId());
+            } else {
+                pessoa.setClusterId(pessoa.getId());
+                pessoa.setCentroide(true);
             }
         } else {
             pessoa.setClusterId(pessoa.getId());
@@ -34,9 +42,11 @@ public class PessoaService {
 
         pessoas.put(pessoa.getId(), pessoa);
 
-        atualizarCentroide(pessoa.getClusterId());
-        reorganizarClusters();
-        analisarDispersao();
+        if (!pessoas.isEmpty()) {
+            atualizarCentroide(pessoa.getClusterId());
+            reorganizarClusters();
+            analisarDispersao();
+        }
 
         return pessoa;
     }
@@ -44,14 +54,29 @@ public class PessoaService {
     public Pessoa atualizarPessoa(Long id, Pessoa novaPessoa) {
         if (pessoas.containsKey(id)) {
             novaPessoa.setId(id);
+            Pessoa pessoaExistente = pessoas.get(id);
+            if (novaPessoa.getClusterId() == null) {
+                novaPessoa.setClusterId(pessoaExistente.getClusterId());
+            }
+            if (!novaPessoa.isCentroide() && pessoaExistente.isCentroide()) {
+                novaPessoa.setCentroide(true);
+            }
             pessoas.put(id, novaPessoa);
+            atualizarCentroide(novaPessoa.getClusterId());
+            reorganizarClusters();
+            analisarDispersao();
             return novaPessoa;
         }
         return null;
     }
 
     public boolean removerPessoa(Long id) {
-        return pessoas.remove(id) != null;
+        boolean removed = pessoas.remove(id) != null;
+        if (removed && !pessoas.isEmpty()) {
+            reorganizarClusters();
+            analisarDispersao();
+        }
+        return removed;
     }
 
     public List<Pessoa> listarPessoas() {
@@ -68,8 +93,13 @@ public class PessoaService {
                 key -> profissaoIndex++
         );
 
-        return new Pessoa(
-        );
+        Pessoa numericPessoa = new Pessoa();
+        numericPessoa.setIdade(pessoa.getIdade());
+        numericPessoa.setSalario(pessoa.getSalario());
+        numericPessoa.setEscolaridade(pessoa.getEscolaridade());
+        numericPessoa.setProfissao(String.valueOf(profissaoCode));
+
+        return numericPessoa;
     }
 
     private double calcularDistancia(Pessoa p1, Pessoa p2) {
@@ -79,7 +109,21 @@ public class PessoaService {
         double idade = np1.getIdade() - np2.getIdade();
         double salario = np1.getSalario() - np2.getSalario();
         double escolaridade = np1.getEscolaridade() - np2.getEscolaridade();
-        double profissao = Double.parseDouble(np1.getProfissao()) - Double.parseDouble(np2.getProfissao());
+
+        double profissaoVal1 = 0;
+        double profissaoVal2 = 0;
+
+        try {
+            if (np1.getProfissao() != null) {
+                profissaoVal1 = Double.parseDouble(np1.getProfissao());
+            }
+            if (np2.getProfissao() != null) {
+                profissaoVal2 = Double.parseDouble(np2.getProfissao());
+            }
+        } catch (NumberFormatException e) {
+            System.err.println("Erro ao converter profissão para número: " + e.getMessage());
+        }
+        double profissao = profissaoVal1 - profissaoVal2;
 
         return Math.sqrt(idade * idade + salario * salario + escolaridade * escolaridade + profissao * profissao);
     }
@@ -87,13 +131,14 @@ public class PessoaService {
     private Pessoa encontrarCentroideMaisProximo(Pessoa pessoa) {
         return pessoas.values().stream()
                 .filter(Pessoa::isCentroide)
+                .filter(c -> c.getId() != null)
                 .min(Comparator.comparingDouble(c -> calcularDistancia(pessoa, c)))
                 .orElse(null);
     }
 
     public Pessoa calcularCentroideVirtual(Long clusterId) {
         List<Pessoa> membros = pessoas.values().stream()
-                .filter(p -> clusterId.equals(p.getClusterId()) && !p.isCentroide())
+                .filter(p -> p.getClusterId() != null && clusterId.equals(p.getClusterId()) && !p.isCentroide())
                 .toList();
 
         if (membros.isEmpty()) return null;
@@ -102,23 +147,37 @@ public class PessoaService {
         double mediaSalario = membros.stream().mapToDouble(Pessoa::getSalario).average().orElse(0);
         double mediaEscolaridade = membros.stream().mapToInt(Pessoa::getEscolaridade).average().orElse(0);
 
-        return new Pessoa();
+        Pessoa centroideVirtual = new Pessoa();
+        centroideVirtual.setIdade((int) mediaIdade);
+        centroideVirtual.setSalario(mediaSalario);
+        centroideVirtual.setEscolaridade((int) mediaEscolaridade);
+        centroideVirtual.setCentroide(true);
+        return centroideVirtual;
     }
 
     public void atualizarCentroide(Long clusterId) {
-        Pessoa novoCentroide = calcularCentroideVirtual(clusterId);
-        if (novoCentroide == null) return;
+        if (clusterId == null) return;
 
-        pessoas.values().removeIf(p -> p.isCentroide() && p.getId().equals(clusterId));
+        Pessoa novoCentroide = calcularCentroideVirtual(clusterId);
+        if (novoCentroide == null) {
+            pessoas.values().removeIf(p -> p.isCentroide() && p.getId().equals(clusterId));
+            return;
+        }
+
+        pessoas.values().removeIf(p -> p.isCentroide() && clusterId.equals(p.getId()));
+
         novoCentroide.setId(clusterId);
+        novoCentroide.setClusterId(clusterId);
         pessoas.put(clusterId, novoCentroide);
     }
 
     public void reorganizarClusters() {
-        for (Pessoa pessoa : pessoas.values()) {
+        if (pessoas.isEmpty()) return;
+
+        for (Pessoa pessoa : new ArrayList<>(pessoas.values())) {
             if (!pessoa.isCentroide()) {
                 Pessoa novoCentroide = encontrarCentroideMaisProximo(pessoa);
-                if (novoCentroide != null) {
+                if (novoCentroide != null && !novoCentroide.getId().equals(pessoa.getClusterId())) {
                     pessoa.setClusterId(novoCentroide.getId());
                 }
             }
@@ -127,6 +186,7 @@ public class PessoaService {
         Set<Long> clusterIds = pessoas.values().stream()
                 .filter(Pessoa::isCentroide)
                 .map(Pessoa::getId)
+                .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
 
         for (Long clusterId : clusterIds) {
@@ -135,31 +195,42 @@ public class PessoaService {
     }
 
     public void analisarDispersao() {
+        if (pessoas.isEmpty()) return;
+
         List<Pessoa> candidatos = new ArrayList<>();
 
-        for (Pessoa pessoa : pessoas.values()) {
+        for (Pessoa pessoa : new ArrayList<>(pessoas.values())) {
             if (!pessoa.isCentroide()) {
                 Pessoa centroideAtual = pessoas.get(pessoa.getClusterId());
+                if (centroideAtual == null) {
+                    continue;
+                }
                 double distAtual = calcularDistancia(pessoa, centroideAtual);
 
                 Pessoa centroideMaisProximo = encontrarCentroideMaisProximo(pessoa);
+                if (centroideMaisProximo == null) {
+                    continue;
+                }
                 double distMaisProx = calcularDistancia(pessoa, centroideMaisProximo);
 
-                if (distAtual > LIMIAR_DISTANCIA && centroideMaisProximo != centroideAtual) {
+                if (distAtual > LIMIAR_DISTANCIA && !centroideMaisProximo.equals(centroideAtual)) {
                     candidatos.add(pessoa);
                 }
             }
         }
 
         for (Pessoa p : candidatos) {
-            Pessoa novoCentroide = new Pessoa(
-            );
+            Pessoa novoCentroide = new Pessoa();
+            novoCentroide.setId(nextId++);
+            novoCentroide.setCentroide(true);
             novoCentroide.setClusterId(novoCentroide.getId());
 
             pessoas.put(novoCentroide.getId(), novoCentroide);
             p.setClusterId(novoCentroide.getId());
         }
 
-        reorganizarClusters();
+        if (!candidatos.isEmpty()) {
+            reorganizarClusters();
+        }
     }
 }
